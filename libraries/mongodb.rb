@@ -108,10 +108,17 @@ class Chef
         end
         if result.fetch("ok", nil) == 1
           # everything is fine, do nothing
-        elsif result.fetch("errmsg", nil) == "already initialized"
-          "In elsif statment. result.fetch returned already initialized."
+        elsif result.fetch("errmsg", nil) =~ %r/(\S+) is already initiated/ || (result.fetch("errmsg", nil) == "already initialized")
+          server,port = $1.nil? ? ['localhost',node['mongodb']['port']] : $1.split(":")
+          begin
+            connection = Mongo::Connection.new(server, port, :op_timeout => 5, :slave_ok => true)
+          rescue
+            abort("Could not connect to database: '#{server}:#{port}'")
+          end
+
           # check if both configs are the same
           config = connection['local']['system']['replset'].find_one({"_id" => name})
+
           if config['_id'] == name and (config['members'] == rs_members or config['members'] == rs_member_ips)
             # config is up-to-date, do nothing
             Chef::Log.info("Replicaset '#{name}' already configured")
@@ -131,7 +138,7 @@ class Chef
   
             
             # rs_connection = Mongo::ReplSetConnection.new( *old_members.collect{ |m| m.split(":") })
-            rs_connection = Mongo::ReplSetConnection.new( *old_members.collect{ |m| m.split("%") })
+            rs_connection = Mongo::ReplSetConnection.new(old_members)
             admin = rs_connection['admin']
             
             cmd = BSON::OrderedHash.new
@@ -148,7 +155,7 @@ class Chef
               Chef::Log.info("New config successfully applied: #{config.inspect}")
             end
             if !result.nil?
-              Chef::Log.error("configuring replicaset returned: #{result.inspect}")
+              Chef::Log.info("configuring replicaset returned: #{result.inspect}")
             end
           end
         elsif !result.fetch("errmsg", nil).nil?
